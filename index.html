@@ -1,81 +1,150 @@
 import streamlit as st
 import pandas as pd
+import plotly.express as px  # 그래프 작성을 위해 추가 설치 필요
 
-# 페이지 설정
-st.set_page_config(page_title="제약 자재 공정 대시보드", layout="wide")
+# 1. 페이지 설정 및 테마 (이미지처럼 깔끔한 레이아웃)
+st.set_page_config(
+    page_title="제약 공정 데이터 분석 대시보드",
+    page_icon="💊",
+    layout="wide",
+    initial_sidebar_state="collapsed"
+)
+
+# 기본 CSS 스타일 추가 (글꼴 크기 및 간격 조정)
+st.markdown("""
+<style>
+    [data-testid="stMetricValue"] {
+        font-size: 48px;
+        color: #004D7F; /* 강조 색상 */
+    }
+    [data-testid="stMetricLabel"] {
+        font-size: 18px;
+        font-weight: bold;
+    }
+    .stTabs [data-baseweb="tab-list"] button [data-testid="stMarkdownContainer"] p {
+        font-size: 18px;
+        font-weight: bold;
+    }
+</style>
+""", unsafe_with_html=True)
 
 @st.cache_data
-def load_and_classify(url):
+def load_and_classify_data(url):
+    """데이터 로드 및 배치별 공정 유형 분류"""
     # 데이터 로드
     df = pd.read_csv(url)
     
-    # 배치별로 공정 리스트 추출 (컬럼명은 실제 데이터에 맞게 '자재명', '배치번호', '공정명'으로 가정)
-    # 실제 데이터의 컬럼명에 따라 아래 이름을 수정하세요.
-    grouped = df.groupby(['자재명', '배치번호'])['공정명'].apply(list).reset_index()
+    # 데이터 전처리: 컬럼명 공백 제거
+    df.columns = df.columns.str.strip()
     
-    def classify(process_list):
+    # 배치별로 공정 리스트 추출 (컬럼명은 실제 데이터에 맞게 '자재명', '배치번호', '공정명'으로 가정)
+    # 실제 데이터의 컬럼명에 따라 아래 세 이름을 수정하세요.
+    col_material = '자재명'
+    col_batch = '배치번호'
+    col_process = '공정명'
+
+    grouped = df.groupby([col_material, col_batch])[col_process].apply(list).reset_index()
+    
+    def classify_pattern(process_list):
+        # 공정명 사이의 공백 제거 및 문자열 합치기
         p_str = "-".join([p.strip() for p in process_list])
         
-        # 1. 인쇄정: 과립-타정-코팅-선별-인쇄
+        # 1. 인쇄정: 과립-타정-코팅-선별-인쇄 (패턴 A)
         if "인쇄" in p_str:
-            return "인쇄정"
-        # 2. 코팅정: 과립-타정-코팅-선별 (인쇄 없음)
+            return "🖨️ 인쇄정"
+        # 2. 코팅정: 과립-타정-코팅-선별 (패턴 B, 인쇄 없음)
         elif "코팅" in p_str:
-            return "코팅정"
-        # 3. 나정: 과립-타정-선별 (코팅/인쇄 없음)
+            return "✨ 코팅정"
+        # 3. 나정: 과립-타정-선별 (패턴 C, 코팅/인쇄 없음)
         elif "과립" in p_str and "타정" in p_str and "선별" in p_str:
-            return "나정"
+            return "⚪ 나정"
         else:
-            return "기타"
+            return "❓ 기타(미분류)"
 
-    grouped['분류'] = grouped['공정명'].apply(classify)
-    return grouped
+    grouped['Process Type'] = grouped[col_process].apply(classify_pattern)
+    return grouped, col_material, col_batch
 
-# 데이터 불러오기
+# --- 실행 메인 로직 ---
+# 데이터 원본 URL
 URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTxJoIbArdj4_BDnV6wxNgLd3k55kbagI1rIdqqBBW5WMb63lHFh3K-UWoPpBwbUeRXjt9B5ieNXa05/pub?gid=240982560&single=true&output=csv"
 
 try:
-    data = load_and_classify(URL)
+    # 데이터 준비
+    classified_df, mat_col, batch_col = load_and_classify_data(URL)
 
-    st.title("💊 자재 공정 분류 대시보드")
+    # 대시보드 제목
+    st.title("💊 제약 자재별 배치 공정 분석 대시보드")
+    st.markdown(f"---")
+
+    # --- ROW 1: Key Metrics (이미지 상단 스타일) ---
+    st.subheader("Key Performance Indicators (KPI)")
+    total_batches = len(classified_df)
+    type_counts = classified_df['Process Type'].value_counts()
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("총 분석 배치 수", f"{total_batches}건")
+    c2.metric("코팅정", f"{type_counts.get('✨ 코팅정', 0)}건", help="과립-타정-코팅-선별")
+    c3.metric("나정", f"{type_counts.get('⚪ 나정', 0)}건", help="과립-타정-선별")
+    c4.metric("인쇄정", f"{type_counts.get('🖨️ 인쇄정', 0)}건", help="과립-타정-코팅-선별-인쇄")
+
     st.markdown("---")
 
-    # 상단 요약 지표 (Metrics)
-    col1, col2, col3 = st.columns(3)
-    col1.metric("코팅정", len(data[data['분류'] == '코팅정']))
-    col2.metric("나정", len(data[data['분류'] == '나정']))
-    col3.metric("인쇄정", len(data[data['분류'] == '인쇄정']))
+    # --- ROW 2: Pie Chart & Summary Table (이미지 중간 그래프 스타일) ---
+    st.subheader("Process Distribution & Summary")
+    chart_col, table_col = st.columns([2, 1]) # 2:1 비율
 
-    st.write("### 분류별 자재 내역 확인")
-    st.info("아래 탭을 클릭하면 해당 분류의 상세 자재 및 배치 내역이 나타납니다.")
+    with chart_col:
+        # Plotly를 이용한 대화형 파이 차트
+        fig = px.pie(
+            classified_df, 
+            names='Process Type', 
+            title="공정 분류별 비율",
+            color_discrete_sequence=px.colors.qualitative.Pastel
+        )
+        fig.update_traces(textposition='inside', textinfo='percent+label')
+        fig.update_layout(showlegend=False) # 이미 레이블이 있으므로 범례 숨김
+        st.plotly_chart(fig, use_container_width=True)
 
-    # 탭 구성
-    tab1, tab2, tab3 = st.tabs(["✨ 코팅정 내역", "⚪ 나정 내역", "🖨️ 인쇄정 내역"])
+    with table_col:
+        st.write("#### 분류별 집계")
+        # 깔끔한 요약 표 정보
+        summary_table = classified_df['Process Type'].value_counts().reset_index()
+        summary_table.columns = ['공정 유형', '배치 수']
+        st.dataframe(summary_table, use_container_width=True, hide_index=True)
+
+    st.markdown("---")
+
+    # --- ROW 3: Detailed Data Tabs (이미지 하단, 클릭 시 상세 내용) ---
+    st.subheader("Detailed Material & Batch List")
+    st.info("아래 탭을 클릭하여 각 공정 유형에 속한 상세 자재 및 배치 내역을 확인하세요.")
+
+    tab1, tab2, tab3 = st.tabs(["✨ 코팅정", "⚪ 나정", "🖨️ 인쇄정"])
 
     with tab1:
-        st.subheader("코팅정 (과립-타정-코팅-선별)")
-        target_data = data[data['분류'] == '코팅정']
+        st.markdown("#### 코팅정 상세 내역 (`과립-타정-코팅-선별`)")
+        target_data = classified_df[classified_df['Process Type'] == '✨ 코팅정']
         if not target_data.empty:
-            st.dataframe(target_data[['자재명', '배치번호', '공정명']], use_container_width=True)
+            st.dataframe(target_data[[mat_col, batch_col, '공정명']], use_container_width=True, hide_index=True)
         else:
-            st.write("해당하는 데이터가 없습니다.")
+            st.warning("해당하는 데이터가 없습니다.")
 
     with tab2:
-        st.subheader("나정 (과립-타정-선별)")
-        target_data = data[data['분류'] == '나정']
+        st.markdown("#### 나정 상세 내역 (`과립-타정-선별`)")
+        target_data = classified_df[classified_df['Process Type'] == '⚪ 나정']
         if not target_data.empty:
-            st.dataframe(target_data[['자재명', '배치번호', '공정명']], use_container_width=True)
+            st.dataframe(target_data[[mat_col, batch_col, '공정명']], use_container_width=True, hide_index=True)
         else:
-            st.write("해당하는 데이터가 없습니다.")
+            st.warning("해당하는 데이터가 없습니다.")
 
     with tab3:
-        st.subheader("인쇄정 (과립-타정-코팅-선별-인쇄)")
-        target_data = data[data['분류'] == '인쇄정']
+        st.markdown("#### 인쇄정 상세 내역 (`과립-타정-코팅-선별-인쇄`)")
+        target_data = classified_df[classified_df['Process Type'] == '🖨️ 인쇄정']
         if not target_data.empty:
-            st.dataframe(target_data[['자재명', '배치번호', '공정명']], use_container_width=True)
+            st.dataframe(target_data[[mat_col, batch_col, '공정명']], use_container_width=True, hide_index=True)
         else:
-            st.write("해당하는 데이터가 없습니다.")
+            st.warning("해당하는 데이터가 없습니다.")
 
 except Exception as e:
-    st.error(f"데이터를 불러오는 중 오류가 발생했습니다: {e}")
-    st.write("CSV URL의 접근 권한이나 컬럼명을 확인해 주세요.")
+    st.error(f"대시보드를 로드하는 중 오류가 발생했습니다.")
+    st.exception(e)
+    st.write("CSV URL의 접근 권한, 네트워크 상태 또는 데이터의 컬럼명(자재명, 배치번호, 공정명)을 확인해 주세요.")
