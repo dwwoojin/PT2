@@ -1,93 +1,162 @@
-import streamlit as st
-import pandas as pd
-
-# 1. 페이지 설정 (넓게 보기)
-st.set_page_config(page_title="제약공정 대시보드", layout="wide")
-
-# 2. 커스텀 디자인 (카드 스타일 및 배경색)
-st.markdown("""
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>제약 공정 분석 대시보드</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.2/papaparse.min.js"></script>
     <style>
-    .main { background-color: #f5f7f9; }
-    .stMetric {
-        background-color: #ffffff;
-        padding: 20px;
-        border-radius: 15px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        border: 1px solid #e1e4e8;
-    }
-    .stDataFrame {
-        background-color: #ffffff;
-        padding: 10px;
-        border-radius: 10px;
-    }
-    h1 { color: #1e3d59; font-weight: 800; }
-    h3 { color: #ff6e40; }
+        :root { --main-blue: #1e3d59; --accent-orange: #ff6e40; }
+        body { background-color: #f8f9fa; font-family: 'Pretendard', sans-serif; }
+        .header { background: var(--main-blue); color: white; padding: 40px 0; margin-bottom: 30px; text-align: center; border-radius: 0 0 30px 30px; }
+        .card-stat { background: white; border: none; border-radius: 20px; box-shadow: 0 10px 20px rgba(0,0,0,0.05); transition: 0.3s; cursor: pointer; padding: 25px; text-align: center; }
+        .card-stat:hover { transform: translateY(-10px); box-shadow: 0 15px 30px rgba(0,0,0,0.1); border: 2px solid var(--accent-orange); }
+        .stat-value { font-size: 3rem; font-weight: 800; color: var(--main-blue); margin: 10px 0; }
+        .stat-label { font-size: 1.2rem; font-weight: 600; color: #666; }
+        .table-section { background: white; border-radius: 20px; padding: 30px; margin-top: 30px; box-shadow: 0 10px 20px rgba(0,0,0,0.05); display: none; }
+        .process-tag { background: #e9ecef; padding: 4px 10px; border-radius: 6px; font-size: 0.85rem; margin-right: 5px; }
+        .loading { font-size: 1.5rem; text-align: center; padding: 50px; }
     </style>
-    """, unsafe_with_html=True)
+</head>
+<body>
 
-@st.cache_data
-def get_data(url):
-    df = pd.read_csv(url)
-    df.columns = [c.strip() for c in df.columns]
-    # 배치별 분류 로직
-    grouped = df.groupby(['자재명', '배치번호'])['공정명'].apply(list).reset_index()
+<div class="header">
+    <h1>🚀 생산 자재 공정 통합 대시보드</h1>
+    <p>실시간 구글 시트 데이터 분석 중</p>
+</div>
+
+<div class="container">
+    <div id="loading-view" class="loading">데이터를 불러오는 중입니다...</div>
     
-    def classify(procs):
-        p_str = "|".join([str(p) for p in procs])
-        if "인쇄" in p_str: return "인쇄정"
-        if "코팅" in p_str: return "코팅정"
-        return "나정"
-    
-    grouped['분류'] = grouped['공정명'].apply(classify)
-    return grouped
+    <div class="row g-4" id="stats-view" style="display: none;">
+        <div class="col-md-3">
+            <div class="card-stat" onclick="showDetail('전체')">
+                <div class="stat-label">📦 전체 배치</div>
+                <div id="cnt-all" class="stat-value">0</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card-stat" onclick="showDetail('코팅정')">
+                <div class="stat-label">✨ 코팅정</div>
+                <div id="cnt-coating" class="stat-value">0</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card-stat" onclick="showDetail('나정')">
+                <div class="stat-label">⚪ 나정</div>
+                <div id="cnt-uncoated" class="stat-value">0</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="card-stat" onclick="showDetail('인쇄정')">
+                <div class="stat-label">🖨️ 인쇄정</div>
+                <div id="cnt-printing" class="stat-value">0</div>
+            </div>
+        </div>
+    </div>
 
-URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTxJoIbArdj4_BDnV6wxNgLd3k55kbagI1rIdqqBBW5WMb63lHFh3K-UWoPpBwbUeRXjt9B5ieNXa05/pub?gid=240982560&single=true&output=csv"
+    <div id="detail-section" class="table-section">
+        <h2 id="detail-title" class="mb-4" style="color: var(--main-blue);">상세 내역</h2>
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead class="table-light">
+                    <tr>
+                        <th>자재명</th>
+                        <th>배치번호</th>
+                        <th>공정 흐름</th>
+                    </tr>
+                </thead>
+                <tbody id="table-body">
+                    </tbody>
+            </table>
+        </div>
+    </div>
+</div>
 
-try:
-    data = get_data(URL)
-    
-    # 상단 타이틀
-    st.title("🏭 생산 자재별 배치 현황 대시보드")
-    st.write("실시간 공정 분류 및 배치 내역 조회 시스템")
-    st.markdown("<br>", unsafe_with_html=True)
+<script>
+    let finalData = [];
+    const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTxJoIbArdj4_BDnV6wxNgLd3k55kbagI1rIdqqBBW5WMb63lHFh3K-UWoPpBwbUeRXjt9B5ieNXa05/pub?gid=240982560&single=true&output=csv";
 
-    # --- 상단 섹션: 큼직한 숫자 카드 (KPI) ---
-    counts = data['분류'].value_counts()
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        st.metric(label="📊 총 배치 수", value=f"{len(data)}건")
-    with col2:
-        st.metric(label="✨ 코팅정", value=f"{counts.get('코팅정', 0)}건", delta="Coated")
-    with col3:
-        st.metric(label="⚪ 나정", value=f"{counts.get('나정', 0)}건", delta="Uncoated")
-    with col4:
-        st.metric(label="🖨️ 인쇄정", value=f"{counts.get('인쇄정', 0)}건", delta="Printed")
+    // 데이터 가져오기
+    Papa.parse(CSV_URL, {
+        download: true,
+        header: true,
+        skipEmptyLines: true,
+        complete: function(results) {
+            if(results.data && results.data.length > 0) {
+                processRawData(results.data);
+            } else {
+                document.getElementById('loading-view').innerText = "데이터를 찾을 수 없습니다. 구글 시트 설정을 확인하세요.";
+            }
+        },
+        error: function(err) {
+            document.getElementById('loading-view').innerText = "CSV 로드 에러: " + err;
+        }
+    });
 
-    st.markdown("<br>", unsafe_with_html=True)
+    function processRawData(rows) {
+        let grouped = {};
+        
+        rows.forEach(row => {
+            // 컬럼명에서 공백 제거하고 데이터 추출
+            let mName = (row['자재명'] || row[' 자재명 '] || "").trim();
+            let bNo = (row['배치번호'] || row[' 배치번호 '] || "").trim();
+            let pName = (row['공정명'] || row[' 공정명 '] || "").trim();
 
-    # --- 하단 섹션: 클릭하면 쫙 나오는 구조 ---
-    st.subheader("🔍 분류별 상세 자재 내역")
-    
-    # 탭으로 깔끔하게 나누기 (이미지 스타일)
-    tab_labels = ["✨ 코팅정 상세", "⚪ 나정 상세", "🖨️ 인쇄정 상세"]
-    tabs = st.tabs(tab_labels)
+            if(!mName || !bNo) return;
 
-    for i, label in enumerate(["코팅정", "나정", "인쇄정"]):
-        with tabs[i]:
-            filtered = data[data['분류'] == label].copy()
-            if not filtered.empty:
-                # 공정 순서 보기 좋게 가공
-                filtered['공정 흐름'] = filtered['공정명'].apply(lambda x: " ➔ ".join(x))
-                
-                # 테이블 출력 (이미지처럼 깔끔하게)
-                st.dataframe(
-                    filtered[['자재명', '배치번호', '공정 흐름']], 
-                    use_container_width=True,
-                    hide_index=True
-                )
-            else:
-                st.info(f"현재 {label} 데이터가 없습니다.")
+            let key = mName + "|" + bNo;
+            if(!grouped[key]) {
+                grouped[key] = { mName, bNo, steps: [] };
+            }
+            grouped[key].steps.push(pName);
+        });
 
-except Exception as e:
-    st.error("데이터 로드 실패! 컬럼명이나 URL을 확인해주세요.")
+        finalData = Object.values(grouped).map(item => {
+            let pStr = item.steps.join(",");
+            let type = "나정";
+            if(pStr.includes("인쇄")) type = "인쇄정";
+            else if(pStr.includes("코팅")) type = "코팅정";
+            
+            return { ...item, type };
+        });
+
+        renderDashboard();
+    }
+
+    function renderDashboard() {
+        document.getElementById('loading-view').style.display = 'none';
+        document.getElementById('stats-view').style.display = 'flex';
+
+        document.getElementById('cnt-all').innerText = finalData.length;
+        document.getElementById('cnt-coating').innerText = finalData.filter(d => d.type === '코팅정').length;
+        document.getElementById('cnt-uncoated').innerText = finalData.filter(d => d.type === '나정').length;
+        document.getElementById('cnt-printing').innerText = finalData.filter(d => d.type === '인쇄정').length;
+    }
+
+    function showDetail(type) {
+        const section = document.getElementById('detail-section');
+        const tbody = document.getElementById('table-body');
+        document.getElementById('detail-title').innerText = `📍 ${type} 상세 내역`;
+        
+        section.style.display = 'block';
+        tbody.innerHTML = "";
+
+        let filtered = type === '전체' ? finalData : finalData.filter(d => d.type === type);
+
+        filtered.forEach(d => {
+            let row = `<tr>
+                <td class="fw-bold">${d.mName}</td>
+                <td><span class="badge bg-secondary">${d.bNo}</span></td>
+                <td>${d.steps.map(s => `<span class="process-tag">${s}</span>`).join(" ➔ ")}</td>
+            </tr>`;
+            tbody.innerHTML += row;
+        });
+
+        section.scrollIntoView({ behavior: 'smooth' });
+    }
+</script>
+
+</body>
+</html>
